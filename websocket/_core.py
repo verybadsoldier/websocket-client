@@ -21,6 +21,7 @@ Copyright (C) 2010 Hiroki Ohtani(liris)
 """
 from __future__ import print_function
 
+import base64
 import socket
 import struct
 import threading
@@ -36,6 +37,7 @@ from ._http import *
 from ._logging import *
 from ._socket import *
 from ._ssl_compat import *
+from ._url import *
 from ._utils import *
 
 __all__ = ['WebSocket', 'create_connection']
@@ -215,17 +217,26 @@ class WebSocket(object):
                  "socket" - pre-initialized stream socket.
 
         """
-        self.sock, addrs = connect(url, self.sock_opt, proxy_info(**options),
-                                   options.pop('socket', None))
-
-        try:
-            self.handshake_response = handshake(self.sock, *addrs, **options)
-            self.connected = True
-        except:
-            if self.sock:
-                self.sock.close()
-                self.sock = None
-            raise
+        for run in ['normal', 'auth']:
+            self.sock, addrs = connect(url, self.sock_opt, proxy_info(**options),
+                                       options.pop('socket', None))
+            try:
+                self.handshake_response = handshake(self.sock, *addrs, **options)
+                self.connected = True
+                break
+            except WebSocketBadStatusException as e:
+                if run != 'normal' or e.status_code != 401:
+                    raise
+                auth_header_name = 'www-authenticate'
+                if auth_header_name in e.headers and e.headers[auth_header_name].startswith('Basic realm='):
+                    _, _, _, _, username, password = parse_url(url)
+                authstr = base64.encodestring('{}:{}'.format(username, password).encode('utf-8'))
+                options['header']['Authorization'] = "Basic " + authstr.decode('utf-8')
+            except:
+                if self.sock:
+                    self.sock.close()
+                    self.sock = None
+                raise
 
     def send(self, payload, opcode=ABNF.OPCODE_TEXT):
         """
